@@ -83,7 +83,7 @@ class Fetcher(QThread):
                 continue
             name, url = [x.strip() for x in line.split("|", 1)]
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "NovaOffice/1.0"})
+                req = urllib.request.Request(url, headers={"User-Agent": "NovaOffice/1.1"})
                 with urllib.request.urlopen(req, timeout=10) as r:
                     self.feed_done.emit(parse_feed(r.read(), name))
             except Exception:
@@ -127,27 +127,19 @@ class NewsModule(QWidget):
         self.worker = None
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 18)
+        root.setContentsMargins(32, 26, 32, 18)
         root.setSpacing(16)
 
-        hero = QFrame()
-        hero.setObjectName("hero")
-        hl = QVBoxLayout(hero)
-        hl.setContentsMargins(28, 22, 28, 22)
-        h1 = QLabel("Nova Office")
+        h1 = QLabel("Главная")
         h1.setObjectName("h1")
-        sub = QLabel("PDF, презентации и документы в одном окне — с печатью на любую бумагу")
-        sub.setObjectName("sub")
-        hl.addWidget(h1)
-        hl.addWidget(sub)
-        root.addWidget(hero)
+        root.addWidget(h1)
 
         grid = QGridLayout()
         grid.setSpacing(12)
-        for i, (text, key) in enumerate((("📂   Открыть файл…", "open"),
-                                         ("📕   Открыть PDF", "pdf"),
-                                         ("📊   Новая презентация", "new_pres"),
-                                         ("📝   Новый документ", "new_doc"))):
+        for i, (text, key) in enumerate((("Открыть файл…", "open"),
+                                         ("Открыть PDF", "pdf"),
+                                         ("Новая презентация", "new_pres"),
+                                         ("Новый документ", "new_doc"))):
             b = QPushButton(text)
             b.setObjectName("quick")
             b.setCursor(Qt.PointingHandCursor)
@@ -159,7 +151,9 @@ class NewsModule(QWidget):
         body.setSpacing(18)
         root.addLayout(body, 1)
 
-        left = QVBoxLayout()
+        self.recent_box = QWidget()
+        left = QVBoxLayout(self.recent_box)
+        left.setContentsMargins(0, 0, 0, 0)
         lt = QLabel("Недавние файлы")
         lt.setObjectName("h2")
         left.addWidget(lt)
@@ -167,7 +161,7 @@ class NewsModule(QWidget):
         self.recent_list.setFixedWidth(280)
         self.recent_list.itemClicked.connect(lambda it: self.open_recent.emit(it.toolTip()))
         left.addWidget(self.recent_list, 1)
-        body.addLayout(left)
+        body.addWidget(self.recent_box)
 
         right = QVBoxLayout()
         top = QHBoxLayout()
@@ -179,10 +173,10 @@ class NewsModule(QWidget):
         self.filter.addItem("Все источники")
         self.filter.currentIndexChanged.connect(self.render)
         top.addWidget(self.filter)
-        b1 = QPushButton("⟳ Обновить")
+        b1 = QPushButton("Обновить")
         b1.clicked.connect(self.refresh)
         top.addWidget(b1)
-        b2 = QPushButton("⚙ Источники")
+        b2 = QPushButton("Источники…")
         b2.clicked.connect(self.edit_feeds)
         top.addWidget(b2)
         right.addLayout(top)
@@ -201,8 +195,14 @@ class NewsModule(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(10 * 60 * 1000)
+        self.apply_settings()
         QTimer.singleShot(300, self.refresh)
+
+    def apply_settings(self):
+        from common import _s
+        self.timer.start(int(_s.value("news_min", 10)) * 60 * 1000)
+        show = _s.value("show_recent", True) in (True, "true", "1", 1)
+        self.recent_box.setVisible(show)
 
     def feeds(self):
         f = get_list("feeds")

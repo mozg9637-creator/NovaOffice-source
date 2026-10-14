@@ -1,19 +1,25 @@
 import os
 import sys
 
+import time
+
 from PySide6.QtCore import QTimer, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from common import APP, res
+from about_module import AboutModule
+from common import APP, _s, recent, res
 from docs_module import DocsModule
 from news_module import NewsModule
+from palette import Palette
 from pdf_module import PdfModule
+from settings_module import SettingsModule, flag
 from slides_module import SlidesModule
 from theme import apply_theme
+from updater import check_updates
+from version import VERSION
 
-VERSION = "1.0.0"
 ROUTE = {".pdf": 1, ".pptx": 2, ".docx": 3, ".txt": 3, ".md": 3, ".html": 3, ".htm": 3}
 FILTER = "Все поддерживаемые (*.pdf *.pptx *.docx *.txt *.md *.html *.htm)"
 
@@ -21,7 +27,7 @@ FILTER = "Все поддерживаемые (*.pdf *.pptx *.docx *.txt *.md *.
 class Main(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP)
+        self.setWindowTitle(f"{APP} {VERSION}")
         self.resize(1360, 860)
         self.setAcceptDrops(True)
         ico = res("icon.ico")
@@ -32,8 +38,10 @@ class Main(QMainWindow):
         self.pdf = PdfModule()
         self.slides = SlidesModule()
         self.docs = DocsModule()
-        self.mods = [("🏠   Главная", self.home), ("📕   PDF", self.pdf),
-                     ("📊   Презентации", self.slides), ("📝   Документы", self.docs)]
+        self.about = AboutModule()
+        self.sett = SettingsModule()
+        self.mods = [("Главная", self.home), ("PDF", self.pdf), ("Презентации", self.slides),
+                     ("Документы", self.docs), ("Новости программы", self.about), ("Настройки", self.sett)]
 
         central = QWidget()
         lay = QHBoxLayout(central)
@@ -61,7 +69,7 @@ class Main(QMainWindow):
             self.btns.append(b)
             self.stack.addWidget(w)
         sl.addStretch(1)
-        d = QPushButton("⚙   Программа по умолчанию")
+        d = QPushButton("Программа по умолчанию")
         d.setObjectName("defbtn")
         d.setToolTip("Откроет настройки Windows: выберите Nova Office для PDF, PPTX, DOCX")
         d.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("ms-settings:defaultapps")))
@@ -76,7 +84,41 @@ class Main(QMainWindow):
 
         self.home.act.connect(self.on_home_action)
         self.home.open_recent.connect(self.open_any)
-        self.go(0)
+        self.about.btn.clicked.connect(lambda: check_updates(self, silent=False))
+        self.sett.changed.connect(self.on_settings)
+        self.sett.feeds_clicked.connect(self.home.edit_feeds)
+        self.sett.recent_cleared.connect(self.home.recent_list.clear)
+        self.pal = QShortcut(QKeySequence("Ctrl+K"), self)
+        self.pal.activated.connect(self.open_palette)
+        self.go(int(_s.value("start_page", 0)))
+        QTimer.singleShot(2500, self.auto_update)
+
+    def on_settings(self):
+        apply_theme(QApplication.instance())
+        self.home.apply_settings()
+
+    def auto_update(self):
+        if not flag("auto_update"):
+            return
+        gap = int(_s.value("update_every_h", 6)) * 3600
+        if time.time() - int(_s.value("last_update_check", 0) or 0) >= gap:
+            check_updates(self, silent=True)
+
+    def open_palette(self):
+        items = [("Открыть файл…", lambda: self.on_home_action("open")),
+                 ("Открыть PDF", lambda: self.on_home_action("pdf")),
+                 ("Новая презентация", lambda: self.on_home_action("new_pres")),
+                 ("Новый документ", lambda: self.on_home_action("new_doc")),
+                 ("Проверить обновления", lambda: check_updates(self, silent=False)),
+                 ("Новости программы", lambda: self.go(4)),
+                 ("Настройки", lambda: self.go(5)),
+                 ("Переключить тему", self.toggle_theme)]
+        items += [(f"Недавний: {os.path.basename(p)}", lambda p=p: self.open_any(p)) for p in recent()]
+        Palette(self, items).exec()
+
+    def toggle_theme(self):
+        _s.setValue("theme", "light" if _s.value("theme", "dark") == "dark" else "dark")
+        self.on_settings()
 
     def go(self, i):
         self.stack.setCurrentIndex(i)
@@ -122,7 +164,7 @@ class Main(QMainWindow):
                 break
 
     def closeEvent(self, e):
-        for _, m in self.mods[1:]:
+        for _, m in self.mods[1:4]:
             if not m.can_close():
                 e.ignore()
                 return
