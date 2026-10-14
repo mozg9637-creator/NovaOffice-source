@@ -5,7 +5,7 @@ import pymupdf as fitz
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QIcon, QKeySequence, QPainter,
                            QPen, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QColorDialog, QFileDialog, QInputDialog, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QApplication, QMenu, QToolButton, QColorDialog, QFileDialog, QInputDialog, QLabel, QLineEdit,
                                QListView, QListWidget, QListWidgetItem, QMessageBox,
                                QScrollArea, QSpinBox, QSplitter, QToolBar, QVBoxLayout,
                                QWidget)
@@ -129,10 +129,21 @@ class PdfModule(QWidget):
         bar.addWidget(self.size_spin)
         bar.addSeparator()
         self.act(bar, "Отменить", "Отменить", self.undo, "Ctrl+Z")
-        self.act(bar, "⟳ Повернуть", "Повернуть страницу", self.rotate_page)
+        self.act(bar, "Повернуть", "Повернуть страницу", self.rotate_page)
         self.act(bar, "Пустая", "Вставить пустую страницу после текущей", self.add_blank)
         self.act(bar, "Добавить PDF", "Вставить страницы из другого PDF", self.insert_pdf)
         self.act(bar, "Удалить страницу", "Удалить страницу", self.delete_page)
+        more = QToolButton()
+        more.setText("Ещё")
+        more.setPopupMode(QToolButton.InstantPopup)
+        mm = QMenu(more)
+        for t, fn in (("Извлечь страницы в новый PDF…", self.extract_pages),
+                      ("Текущая страница в PNG…", self.page_to_png),
+                      ("Скопировать текст страницы", self.copy_page_text),
+                      ("Пронумеровать страницы", self.number_pages)):
+            mm.addAction(t, fn)
+        more.setMenu(mm)
+        bar.addWidget(more)
 
         # ---- навигация
         nav = QToolBar()
@@ -528,6 +539,71 @@ class PdfModule(QWidget):
             return
         self.build_thumbs()
         self.goto(self.page + 1)
+
+    # ------------------------------------------------------------ дополнительно
+    def parse_range(self, text):
+        out = []
+        for part in text.replace(" ", "").split(","):
+            if not part:
+                continue
+            a, _, b = part.partition("-")
+            a, b = int(a), int(b or a)
+            out += [i - 1 for i in range(min(a, b), max(a, b) + 1) if 1 <= i <= len(self.doc)]
+        return list(dict.fromkeys(out))
+
+    def extract_pages(self):
+        if not self.doc:
+            return
+        text, ok = QInputDialog.getText(self, "Извлечь страницы", f"Номера страниц (всего {len(self.doc)}), например 1-3,5:",
+                                        text=str(self.page + 1))
+        if not ok:
+            return
+        try:
+            idx = self.parse_range(text)
+            if not idx:
+                raise ValueError("нет таких страниц")
+        except ValueError as e:
+            QMessageBox.warning(self, "PDF", f"Неверный диапазон: {e}")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить страницы", "", "PDF (*.pdf)")
+        if not path:
+            return
+        out = fitz.open()
+        for i in idx:
+            out.insert_pdf(self.doc, from_page=i, to_page=i)
+        out.save(path, garbage=3, deflate=True)
+        out.close()
+        self.status.setText(f"Сохранено страниц: {len(idx)} → {path}")
+
+    def page_to_png(self):
+        if not self.doc:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить страницу", f"страница-{self.page + 1}.png",
+                                              "PNG (*.png)")
+        if path:
+            self.pg().get_pixmap(dpi=200).save(path)
+            self.status.setText("Сохранено: " + path)
+
+    def copy_page_text(self):
+        if not self.doc:
+            return
+        txt = self.pg().get_text().strip()
+        QApplication.clipboard().setText(txt)
+        self.status.setText(f"Скопировано символов: {len(txt)}" if txt else
+                            "На странице нет текстового слоя (скан) — копировать нечего")
+
+    def number_pages(self):
+        if not self.doc:
+            return
+        self.push_undo()
+        n = len(self.doc)
+        for i, pg in enumerate(self.doc):
+            r = pg.rect
+            pg.insert_textbox(fitz.Rect(0, r.height - 34, r.width, r.height - 12), f"{i + 1} / {n}",
+                              fontsize=10, fontname="helv", align=1, color=(0.3, 0.3, 0.3))
+        self.show_page()
+        self.build_thumbs()
+        self.status.setText("Номера страниц добавлены (Ctrl+Z — отменить)")
 
     # ------------------------------------------------------------ print
     def print_doc(self):

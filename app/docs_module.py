@@ -228,7 +228,7 @@ class DocsModule(QWidget):
         bar = QToolBar()
         bar.setMovable(False)
         root.addWidget(bar)
-        self.act(bar, "🆕 Новый", "Новый документ", self.new, "Ctrl+N")
+        self.act(bar, "Новый", "Новый документ", self.new, "Ctrl+N")
         self.act(bar, "Открыть", "Открыть .docx / .md / .txt / .html", self.open_dialog, "Ctrl+O")
         self.act(bar, "Сохранить", "Сохранить", self.save, "Ctrl+S")
         self.act(bar, "Сохранить как…", "Сохранить как…", self.save_as, "Ctrl+Shift+S")
@@ -239,6 +239,8 @@ class DocsModule(QWidget):
         self.act(bar, "Страница", "Размер бумаги, поля, ориентация", self.page_setup)
         bar.addSeparator()
         self.act(bar, "Найти", "Найти в тексте", self.find, "Ctrl+F")
+        self.act(bar, "Заменить", "Найти и заменить всё", self.replace_all, "Ctrl+H")
+        self.act(bar, "Дата", "Вставить сегодняшнюю дату", self.insert_date)
 
         fb = QToolBar()
         fb.setMovable(False)
@@ -422,6 +424,28 @@ class DocsModule(QWidget):
                 self.edit.moveCursor(QTextCursor.Start)
                 if not self.edit.find(t):
                     QMessageBox.information(self, "Поиск", "Ничего не найдено.")
+
+    def replace_all(self):
+        old, ok = QInputDialog.getText(self, "Заменить", "Найти:")
+        if not ok or not old:
+            return
+        new, ok = QInputDialog.getText(self, "Заменить", f"Заменить «{old}» на:")
+        if not ok:
+            return
+        doc = self.edit.document()
+        cur = doc.find(old)
+        n = 0
+        self.edit.textCursor().beginEditBlock()
+        while not cur.isNull():
+            cur.insertText(new)
+            n += 1
+            cur = doc.find(old, cur)
+        self.edit.textCursor().endEditBlock()
+        self.status.setText(f"Заменено: {n}")
+
+    def insert_date(self):
+        from datetime import date
+        self.edit.textCursor().insertText(date.today().strftime("%d.%m.%Y"))
 
     def sync_toolbar(self):
         cf = self.edit.currentCharFormat()

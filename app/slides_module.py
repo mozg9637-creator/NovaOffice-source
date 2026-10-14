@@ -337,7 +337,7 @@ class SlidesModule(QWidget):
         bar = QToolBar()
         bar.setMovable(False)
         root.addWidget(bar)
-        self.act(bar, "🆕 Новая", "Новая презентация", self.new)
+        self.act(bar, "Новая", "Новая презентация", self.new)
         self.act(bar, "Открыть", "Открыть .pptx", self.open_dialog, "Ctrl+O")
         self.act(bar, "Сохранить", "Сохранить", self.save, "Ctrl+S")
         self.act(bar, "Сохранить как…", "Сохранить как…", self.save_as, "Ctrl+Shift+S")
@@ -355,6 +355,7 @@ class SlidesModule(QWidget):
         bar.addSeparator()
         self.act(bar, "С начала", "Показ с первого слайда", lambda: self.present(0), "F5")
         self.act(bar, "С текущего", "Показ с текущего слайда", lambda: self.present(self.idx), "Shift+F5")
+        self.act(bar, "В PNG", "Сохранить все слайды как картинки", self.export_png)
         self.act(bar, "В PDF", "Экспорт в PDF", self.export_pdf)
         self.act(bar, "Печать", "Печать", self.print_slides, "Ctrl+P")
 
@@ -717,6 +718,19 @@ class SlidesModule(QWidget):
                                                          Qt.KeepAspectRatio, Qt.SmoothTransformation)
             painter.drawImage(QPointF((r.width() - img.width()) / 2, (r.height() - img.height()) / 2), img)
         painter.end()
+
+    def export_png(self):
+        d = QFileDialog.getExistingDirectory(self, "Папка для картинок")
+        if not d:
+            return
+        base = os.path.splitext(os.path.basename(self.path or "слайд"))[0]
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for i in range(len(self.prs.slides)):
+                render_slide(self.prs, i, 1920).save(os.path.join(d, f"{base}-{i + 1:02d}.png"))
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.status.setText(f"Сохранено картинок: {len(self.prs.slides)} → {d}")
 
     def export_pdf(self):
         p, _ = QFileDialog.getSaveFileName(self, "Экспорт в PDF", "", "PDF (*.pdf)")

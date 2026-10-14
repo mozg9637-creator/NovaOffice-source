@@ -187,7 +187,27 @@ class Main(QMainWindow):
         e.accept()
 
 
+def install_crash_log():
+    import traceback
+    path = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "NovaOffice", "crash.log")
+
+    def hook(tp, val, tb):
+        text = "".join(traceback.format_exception(tp, val, tb))
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + text + "\n")
+        except OSError:
+            pass
+        try:
+            QMessageBox.critical(None, APP, f"Произошла ошибка, программа продолжит работу.\n\n{val}\n\nПодробности: {path}")
+        except Exception:
+            pass
+    sys.excepthook = hook
+
+
 def main():
+    install_crash_log()
     app = QApplication(sys.argv)
     app.setApplicationName(APP)
     app.setOrganizationName("NovaOffice")
