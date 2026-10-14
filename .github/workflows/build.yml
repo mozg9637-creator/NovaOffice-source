@@ -34,9 +34,15 @@ jobs:
       - name: Build app (PyInstaller)
         run: pyinstaller --noconfirm --windowed --name NovaOffice --icon icon.ico --add-data "icon.ico;." --paths app --collect-all pymupdf --collect-data docx --collect-data pptx --exclude-module tkinter app/main.py
 
+      - name: Version file
+        run: python -c "import sys; sys.path.insert(0,'app'); from version import VERSION, BUILD; open('dist/NovaOffice/version.txt','w').write(f'{VERSION}.{BUILD}')"
+
       - name: Pack payload
         run: |
           python -c "import zipfile,os; z=zipfile.ZipFile('installer/payload.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9); [z.write(os.path.join(r,f), os.path.relpath(os.path.join(r,f),'dist/NovaOffice')) for r,_,fs in os.walk('dist/NovaOffice') for f in fs]"
+
+      - name: Update package
+        run: copy installer\payload.zip dist\NovaOffice-update.zip
 
       - name: Build installer
         run: pyinstaller --noconfirm --onefile --windowed --name NovaOffice-Setup --icon icon.ico --add-data "installer/payload.zip;." --add-data "icon.ico;." --paths app --exclude-module tkinter installer/setup.py
@@ -45,6 +51,11 @@ jobs:
         with:
           name: NovaOffice-Setup
           path: dist/NovaOffice-Setup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NovaOffice-Update
+          path: dist/NovaOffice-update.zip
 
       # прямая ссылка для автообновления без токена: релиз build-<номер запуска>
       - name: Release (build)
@@ -55,7 +66,9 @@ jobs:
           name: Сборка №${{ github.run_number }}
           prerelease: true
           body: ${{ github.event.head_commit.message }}
-          files: dist/NovaOffice-Setup.exe
+          files: |
+            dist/NovaOffice-Setup.exe
+            dist/NovaOffice-update.zip
 
       - name: Release (tag)
         if: startsWith(github.ref, 'refs/tags/')
