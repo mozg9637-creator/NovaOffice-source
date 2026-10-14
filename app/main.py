@@ -91,7 +91,21 @@ class Main(QMainWindow):
         self.pal = QShortcut(QKeySequence("Ctrl+K"), self)
         self.pal.activated.connect(self.open_palette)
         self.go(int(_s.value("start_page", 0)))
+        if flag("remember_geometry"):
+            g = _s.value("geometry")
+            if g:
+                self.restoreGeometry(g)
+        QShortcut(QKeySequence("F1"), self).activated.connect(self.help)
+        QShortcut(QKeySequence("F11"), self).activated.connect(
+            lambda: self.showNormal() if self.isFullScreen() else self.showFullScreen())
         QTimer.singleShot(2500, self.auto_update)
+
+    def help(self):
+        QMessageBox.information(self, "Горячие клавиши", (
+            "Ctrl+K — быстрые команды\nCtrl+O / Ctrl+S / Ctrl+P — открыть / сохранить / печать\n"
+            "F11 — полный экран\n\nПрезентации:\nF5 — показ с первого слайда\nShift+F5 — показ с текущего\n"
+            "Ctrl+D — дублировать слайд\nВ показе: стрелки/пробел — листать, Home/End — первый/последний,\n"
+            "B / W — чёрный / белый экран, L — указка, T — таймер,\nцифры+Enter — перейти к слайду, Esc — выход"))
 
     def on_settings(self):
         apply_theme(QApplication.instance())
@@ -168,6 +182,8 @@ class Main(QMainWindow):
             if not m.can_close():
                 e.ignore()
                 return
+        if flag("remember_geometry"):
+            _s.setValue("geometry", self.saveGeometry())
         e.accept()
 
 
@@ -181,6 +197,8 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     if args and os.path.exists(args[0]):
         QTimer.singleShot(0, lambda: w.open_any(os.path.abspath(args[0])))
+    elif flag("open_last", False) and recent():
+        QTimer.singleShot(0, lambda: w.open_any(recent()[0]))
     sys.exit(app.exec())
 
 

@@ -1,12 +1,14 @@
+import copy
 import os
+import time
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_FILL
-from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches
-from PySide6.QtCore import QMarginsF, QPointF, QRectF, QSizeF, Qt, QTimer
+from PySide6.QtCore import QMarginsF, QPoint, QPointF, QRectF, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPageLayout,
                            QPageSize, QPainter, QPen, QPixmap)
 from PySide6.QtWidgets import (QApplication, QColorDialog, QFileDialog, QHBoxLayout, QInputDialog,
@@ -193,40 +195,127 @@ def set_text(shape, text):
 
 # ---------------------------------------------------------------- показ / печать
 class Show(QWidget):
-    def __init__(self, prs, start):
+    """Показ слайдов. Стрелки/пробел/колесо — листать, Home/End — первый/последний, B/W — чёрный/белый экран,
+    L — лазерная указка, T — таймер, цифры+Enter — перейти к слайду, Esc — выход."""
+    closed = Signal()
+
+    def __init__(self, prs, start=0):
         super().__init__()
-        self.prs, self.i = prs, start
+        self.prs, self.i = prs, max(0, min(start, len(prs.slides) - 1))
         self.cache = None
+        self.scaled = None
+        self.mode = ""            # "" / "black" / "white"
+        self.laser = False
+        self.timer_on = False
+        self.num = ""
+        self.mouse = QPoint(-1, -1)
+        self.t0 = time.time()
         self.setWindowFlag(Qt.FramelessWindowHint)
-        self.setStyleSheet("background:black;")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
         self.setCursor(Qt.BlankCursor)
+        self.hide_cursor = QTimer(self)
+        self.hide_cursor.setSingleShot(True)
+        self.hide_cursor.timeout.connect(lambda: self.setCursor(Qt.BlankCursor))
+        self.tick = QTimer(self)
+        self.tick.timeout.connect(self.update)
+        self.tick.start(1000)
 
     def go(self, n):
         n = max(0, min(len(self.prs.slides) - 1, n))
-        if n != self.i or self.cache is None:
+        if n != self.i:
             self.i = n
-            self.cache = None
+            self.cache = self.scaled = None
         self.update()
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.cache = self.scaled = None
+
     def paintEvent(self, e):
-        if self.cache is None:
-            self.cache = render_slide(self.prs, self.i, max(1280, self.width()))
         p = QPainter(self)
-        p.fillRect(self.rect(), Qt.black)
-        img = self.cache.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        p.drawImage((self.width() - img.width()) // 2, (self.height() - img.height()) // 2, img)
+        p.fillRect(self.rect(), Qt.white if self.mode == "white" else Qt.black)
+        if self.mode:
+            p.end()
+            return
+        if self.scaled is None:
+            self.cache = render_slide(self.prs, self.i, max(1280, self.width()))
+            self.scaled = self.cache.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        img = self.scaled
+        ox, oy = (self.width() - img.width()) // 2, (self.height() - img.height()) // 2
+        p.drawImage(ox, oy, img)
+        n = len(self.prs.slides)
+        p.fillRect(0, self.height() - 3, int(self.width() * (self.i + 1) / n), 3, QColor("#3b6ea5"))
+        p.setPen(QColor(255, 255, 255, 170))
+        p.setFont(QFont("Segoe UI", 11))
+        info = f"{self.i + 1} / {n}"
+        if self.timer_on:
+            t = int(time.time() - self.t0)
+            info = f"{t // 60:02d}:{t % 60:02d}   " + info
+        if self.num:
+            info = f"→ {self.num}   " + info
+        if self.timer_on or self.num or self.cursor().shape() != Qt.BlankCursor:
+            p.drawText(self.rect().adjusted(0, 0, -14, -10), Qt.AlignRight | Qt.AlignBottom, info)
+        if self.laser and self.mouse.x() >= 0:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 40, 40, 90))
+            p.drawEllipse(self.mouse, 16, 16)
+            p.setBrush(QColor(255, 40, 40))
+            p.drawEllipse(self.mouse, 7, 7)
         p.end()
 
+    def set_mode(self, m):
+        self.mode = "" if self.mode == m else m
+        self.update()
+
     def keyPressEvent(self, e):
-        if e.key() in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space, Qt.Key_PageDown, Qt.Key_Return):
+        k = e.key()
+        if Qt.Key_0 <= k <= Qt.Key_9:
+            self.num = (self.num + chr(k))[-4:]
+        elif k in (Qt.Key_Return, Qt.Key_Enter) and self.num:
+            self.go(int(self.num) - 1)
+            self.num = ""
+        elif k in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space, Qt.Key_PageDown, Qt.Key_Return, Qt.Key_N):
+            self.mode = ""
             self.go(self.i + 1)
-        elif e.key() in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp, Qt.Key_Backspace):
+        elif k in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp, Qt.Key_Backspace, Qt.Key_P):
+            self.mode = ""
             self.go(self.i - 1)
-        elif e.key() == Qt.Key_Escape:
+        elif k == Qt.Key_Home:
+            self.go(0)
+        elif k == Qt.Key_End:
+            self.go(len(self.prs.slides) - 1)
+        elif k in (Qt.Key_B, Qt.Key_Period):
+            self.set_mode("black")
+        elif k in (Qt.Key_W, Qt.Key_Comma):
+            self.set_mode("white")
+        elif k == Qt.Key_L:
+            self.laser = not self.laser
+            self.update()
+        elif k == Qt.Key_T:
+            self.timer_on = not self.timer_on
+            self.t0 = time.time()
+            self.update()
+        elif k in (Qt.Key_Escape, Qt.Key_Q):
             self.close()
+        self.update()
+
+    def mouseMoveEvent(self, e):
+        self.mouse = e.position().toPoint()
+        self.setCursor(Qt.BlankCursor if self.laser else Qt.ArrowCursor)
+        self.hide_cursor.start(2000)
+        self.update()
 
     def mousePressEvent(self, e):
         self.go(self.i + (1 if e.button() == Qt.LeftButton else -1))
+
+    def wheelEvent(self, e):
+        self.go(self.i + (-1 if e.angleDelta().y() > 0 else 1))
+
+    def closeEvent(self, e):
+        self.tick.stop()
+        self.closed.emit()
+        super().closeEvent(e)
 
 
 # ---------------------------------------------------------------- модуль
@@ -249,22 +338,25 @@ class SlidesModule(QWidget):
         bar.setMovable(False)
         root.addWidget(bar)
         self.act(bar, "🆕 Новая", "Новая презентация", self.new)
-        self.act(bar, "📂 Открыть", "Открыть .pptx", self.open_dialog, "Ctrl+O")
-        self.act(bar, "💾 Сохранить", "Сохранить", self.save, "Ctrl+S")
-        self.act(bar, "💾 Как…", "Сохранить как…", self.save_as, "Ctrl+Shift+S")
+        self.act(bar, "Открыть", "Открыть .pptx", self.open_dialog, "Ctrl+O")
+        self.act(bar, "Сохранить", "Сохранить", self.save, "Ctrl+S")
+        self.act(bar, "Сохранить как…", "Сохранить как…", self.save_as, "Ctrl+Shift+S")
         bar.addSeparator()
-        self.act(bar, "➕ Слайд", "Добавить слайд", self.add_slide)
-        self.act(bar, "🗑 Слайд", "Удалить слайд", self.del_slide)
-        self.act(bar, "⬆", "Переместить вверх", lambda: self.move_slide(-1))
-        self.act(bar, "⬇", "Переместить вниз", lambda: self.move_slide(1))
+        self.act(bar, "Новый слайд", "Добавить слайд", self.add_slide)
+        self.act(bar, "Дублировать", "Дублировать слайд", self.dup_slide, "Ctrl+D")
+        self.act(bar, "Удалить слайд", "Удалить слайд", self.del_slide)
+        self.act(bar, "Выше", "Переместить вверх", lambda: self.move_slide(-1))
+        self.act(bar, "Ниже", "Переместить вниз", lambda: self.move_slide(1))
         bar.addSeparator()
-        self.act(bar, "🔤 Текст", "Добавить текстовый блок", self.add_textbox)
-        self.act(bar, "🖼 Картинка", "Вставить картинку", self.add_picture)
-        self.act(bar, "🎨 Фон", "Цвет фона слайда", self.set_bg)
+        self.act(bar, "Текст", "Добавить текстовый блок", self.add_textbox)
+        self.act(bar, "Картинка", "Вставить картинку", self.add_picture)
+        self.act(bar, "Фигура", "Прямоугольник или овал", self.add_shape)
+        self.act(bar, "Фон", "Цвет фона слайда", self.set_bg)
         bar.addSeparator()
-        self.act(bar, "▶ Показ", "Показ с текущего слайда", self.present, "F5")
-        self.act(bar, "📄 В PDF", "Экспорт в PDF", self.export_pdf)
-        self.act(bar, "🖨 Печать", "Печать", self.print_slides, "Ctrl+P")
+        self.act(bar, "С начала", "Показ с первого слайда", lambda: self.present(0), "F5")
+        self.act(bar, "С текущего", "Показ с текущего слайда", lambda: self.present(self.idx), "Shift+F5")
+        self.act(bar, "В PDF", "Экспорт в PDF", self.export_pdf)
+        self.act(bar, "Печать", "Печать", self.print_slides, "Ctrl+P")
 
         self.list = QListWidget()
         self.list.setViewMode(QListView.ListMode)
@@ -279,7 +371,7 @@ class SlidesModule(QWidget):
         self.canvas.setAlignment(Qt.AlignCenter)
         self.canvas.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.canvas.setMinimumSize(300, 200)
-        self.canvas.setStyleSheet("background:#0f1117;")
+        self.canvas.setObjectName("canvas")
 
         side = QWidget()
         side.setFixedWidth(290)
@@ -294,9 +386,14 @@ class SlidesModule(QWidget):
         self.editor.setPlaceholderText("Выберите элемент и редактируйте текст — слайд обновится сразу")
         self.editor.textChanged.connect(lambda: self.timer.start(350))
         sl.addWidget(self.editor, 1)
-        b = QPushButton("🗑 Удалить элемент")
+        b = QPushButton("Удалить элемент")
         b.clicked.connect(self.del_shape)
         sl.addWidget(b)
+        sl.addWidget(QLabel("Заметки докладчика"))
+        self.notes = QPlainTextEdit()
+        self.notes.setMaximumHeight(110)
+        self.notes.textChanged.connect(self.save_notes)
+        sl.addWidget(self.notes)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.apply_text)
@@ -403,6 +500,7 @@ class SlidesModule(QWidget):
             if it:
                 it.setIcon(self.thumb(self.idx))
         self.fill_shapes()
+        self.load_notes()
         self.status.setText(f"Слайд {self.idx + 1} из {len(self.prs.slides)}")
 
     def fit(self):
@@ -533,10 +631,80 @@ class SlidesModule(QWidget):
             self.dirty = True
             self.refresh(thumb=True)
 
+    def load_notes(self):
+        self.loading = True
+        try:
+            sl = self.slide()
+            self.notes.setPlainText(sl.notes_slide.notes_text_frame.text if sl.has_notes_slide else "")
+        except Exception:
+            self.notes.setPlainText("")
+        self.loading = False
+
+    def save_notes(self):
+        if self.loading:
+            return
+        txt = self.notes.toPlainText()
+        sl = self.slide()
+        if not txt and not sl.has_notes_slide:
+            return
+        try:
+            sl.notes_slide.notes_text_frame.text = txt
+            self.dirty = True
+        except Exception:
+            pass
+
+    def dup_slide(self):
+        src = self.slide()
+        new = self.prs.slides.add_slide(src.slide_layout)
+        for shp in list(new.shapes):
+            shp._element.getparent().remove(shp._element)
+        for shp in src.shapes:
+            el = copy.deepcopy(shp._element)
+            new.shapes._spTree.insert_element_before(el, "p:extLst")
+            for blip in el.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}blip"):
+                rid = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+                if rid and rid in src.part.rels:
+                    blip.set("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed",
+                             new.part.relate_to(src.part.rels[rid].target_part, src.part.rels[rid].reltype))
+        try:
+            if src._element.cSld.bg is not None:
+                new._element.cSld.insert(0, copy.deepcopy(src._element.cSld.bg))
+        except Exception:
+            pass
+        # поставить копию сразу после оригинала
+        lst = self.prs.slides._sldIdLst
+        items = list(lst)
+        el = items[-1]
+        lst.remove(el)
+        lst.insert(self.idx + 1, el)
+        self.idx += 1
+        self.dirty = True
+        self.reload_all()
+
+    def add_shape(self):
+        kinds = {"Прямоугольник": MSO_SHAPE.RECTANGLE, "Овал": MSO_SHAPE.OVAL}
+        name, ok = QInputDialog.getItem(self, "Фигура", "Тип:", list(kinds), 0, False)
+        if not ok:
+            return
+        c = QColorDialog.getColor(QColor("#3b6ea5"), self, "Цвет фигуры")
+        if not c.isValid():
+            return
+        sw, sh = self.prs.slide_width, self.prs.slide_height
+        shp = self.slide().shapes.add_shape(kinds[name], int(sw * 0.3), int(sh * 0.3), int(sw * 0.4), int(sh * 0.3))
+        shp.fill.solid()
+        shp.fill.fore_color.rgb = RGBColor(c.red(), c.green(), c.blue())
+        shp.line.fill.background()
+        self.dirty = True
+        self.refresh(thumb=True)
+
     # ---- показ / PDF / печать
-    def present(self):
-        self.show_win = Show(self.prs, self.idx)
+    def present(self, start=0):
+        if self.show_win is not None:
+            self.show_win.close()
+        self.show_win = Show(self.prs, start)
+        self.show_win.closed.connect(lambda: setattr(self, "show_win", None))
         self.show_win.showFullScreen()
+        self.show_win.activateWindow()
         self.show_win.setFocus()
 
     def paint_slides(self, pr, a, b):

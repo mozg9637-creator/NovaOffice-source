@@ -190,6 +190,11 @@ class UpdateDialog(QDialog):
         row.addWidget(self.go)
         lay.addLayout(row)
 
+    def reject(self):
+        if getattr(self, "dl", None) is not None and self.dl.isRunning():
+            return            # во время скачивания закрыть нельзя
+        super().reject()
+
     def on_skip(self):
         _s.setValue("skip_build", self.run_info["n"])
         self.reject()
@@ -222,6 +227,9 @@ class UpdateDialog(QDialog):
 
 def check_updates(parent, silent):
     """silent=True — автопроверка на старте: молчим, если нечего показывать."""
+    old = getattr(parent, "_chk", None)
+    if old is not None and old.isRunning():
+        return
     chk = Checker()
     parent._chk = chk
 

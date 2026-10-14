@@ -69,6 +69,8 @@ class AboutModule(QWidget):
             self.load()
 
     def load(self):
+        if getattr(self, "w", None) is not None and self.w.isRunning():
+            return
         self.status.setText("Загрузка…")
         self.w = RunsLoader()
         self.w.done.connect(self.fill)

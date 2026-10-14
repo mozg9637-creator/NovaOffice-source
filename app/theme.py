@@ -82,6 +82,7 @@ QLabel#ctitle { font-size: 10.5pt; font-weight: 600; }
 QLabel#cdesc { color: %(dim)s; }
 QFrame#card { background: transparent; border: none; border-bottom: 1px solid %(line)s; }
 QFrame#card:hover { background: %(hover)s; }
+QLabel#canvas, QWidget#wrap { background: %(side)s; }
 QFrame#sep { background: %(line)s; max-height: 1px; }
 """
 

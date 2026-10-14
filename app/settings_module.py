@@ -55,6 +55,14 @@ class SettingsModule(QWidget):
         self.restore.setChecked(flag("show_recent"))
         form.addRow("", self.restore)
 
+        self.geo = QCheckBox("Запоминать размер и положение окна")
+        self.geo.setChecked(flag("remember_geometry"))
+        form.addRow("", self.geo)
+
+        self.last = QCheckBox("Открывать последний файл при запуске")
+        self.last.setChecked(flag("open_last", False))
+        form.addRow("", self.last)
+
         self.auto = QCheckBox("Проверять обновления при запуске")
         self.auto.setChecked(flag("auto_update"))
         form.addRow("Обновления", self.auto)
@@ -90,7 +98,7 @@ class SettingsModule(QWidget):
             w.currentIndexChanged.connect(self.save)
         for w in (self.news_min, self.every):
             w.valueChanged.connect(self.save)
-        for w in (self.restore, self.auto):
+        for w in (self.restore, self.auto, self.geo, self.last):
             w.toggled.connect(self.save)
         self.token.editingFinished.connect(self.save)
 
@@ -105,6 +113,8 @@ class SettingsModule(QWidget):
         _s.setValue("news_min", self.news_min.value())
         _s.setValue("show_recent", self.restore.isChecked())
         _s.setValue("auto_update", self.auto.isChecked())
+        _s.setValue("remember_geometry", self.geo.isChecked())
+        _s.setValue("open_last", self.last.isChecked())
         _s.setValue("update_every_h", self.every.value())
         _s.setValue("gh_token", self.token.text().strip())
         self.changed.emit()
