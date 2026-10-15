@@ -44,8 +44,8 @@ jobs:
       - name: Update package
         run: copy installer\payload.zip dist\NovaOffice-update.zip
 
-      - name: Build installer
-        run: pyinstaller --noconfirm --onefile --windowed --name NovaOffice-Setup --icon icon.ico --add-data "installer/payload.zip;." --add-data "icon.ico;." --paths app --exclude-module tkinter installer/setup.py
+      - name: Build installer (small bootstrapper; downloads app package during setup)
+        run: pyinstaller --noconfirm --onefile --windowed --name NovaOffice-Setup --icon icon.ico --add-data "icon.ico;." --paths app --exclude-module tkinter --exclude-module numpy --exclude-module pandas --exclude-module matplotlib --exclude-module scipy --exclude-module PyMuPDF --exclude-module fitz --exclude-module docx --exclude-module pptx installer/setup.py
 
       - uses: actions/upload-artifact@v4
         with:

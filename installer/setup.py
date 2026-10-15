@@ -7,6 +7,8 @@ import sys
 import tempfile
 import time
 import zipfile
+import urllib.error
+import urllib.request
 
 try:
     import winreg
@@ -18,7 +20,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
                                QMessageBox, QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from version import BUILD, VERSION
+from version import BUILD, REPO, VERSION
 
 NAME = "Nova Office"
 EXE = "NovaOffice.exe"
@@ -143,11 +145,48 @@ def free_space(path):
         return 1 << 62
 
 
-def payload_size():
+def payload_path():
+    """Путь к архиву программы. В маленьком установщике архив скачивается отдельно."""
+    bundled = res("payload.zip")
+    if bundled and os.path.isfile(bundled):
+        return bundled
+
+    # Сохраняем архив в TEMP, чтобы EXE установщика не содержал всю программу.
+    target = os.path.join(tempfile.gettempdir(), f"NovaOffice-payload-{BUILD or VERSION}.zip")
+    if os.path.isfile(target) and zipfile.is_zipfile(target):
+        return target
+    if not BUILD:
+        raise RuntimeError("Не задан номер сборки для загрузки файлов. Запустите установщик из релиза GitHub.")
+
+    url = f"https://github.com/{REPO}/releases/download/build-{BUILD}/NovaOffice-update.zip"
+    log(f"загрузка пакета программы: {url}")
+    request = urllib.request.Request(url, headers={"User-Agent": "NovaOffice-Setup"})
     try:
-        with zipfile.ZipFile(res("payload.zip")) as z:
+        with urllib.request.urlopen(request, timeout=60) as response, open(target + ".part", "wb") as f:
+            shutil.copyfileobj(response, f)
+        os.replace(target + ".part", target)
+        if not zipfile.is_zipfile(target):
+            os.remove(target)
+            raise RuntimeError("Скачанный пакет программы повреждён.")
+        return target
+    except Exception as e:
+        try:
+            os.remove(target + ".part")
+        except OSError:
+            pass
+        raise RuntimeError(f"Не удалось скачать файлы Nova Office. Проверьте интернет и попробуйте снова.\n{e}") from e
+
+
+def payload_size():
+    # Не скачиваем большой пакет при каждом изменении поля пути в мастере.
+    bundled = res("payload.zip")
+    if not bundled or not os.path.isfile(bundled):
+        return 0
+    try:
+        with zipfile.ZipFile(bundled) as z:
             return sum(i.file_size for i in z.infolist())
-    except Exception:
+    except Exception as e:
+        log(f"не удалось определить размер пакета: {e}")
         return 0
 
 
@@ -203,9 +242,13 @@ class Worker(QThread):
                 os.replace(t, old)
                 had_old = True
             os.makedirs(t, exist_ok=True)
-            with zipfile.ZipFile(res("payload.zip")) as z:
+            archive = payload_path()
+            with zipfile.ZipFile(archive) as z:
                 infos = z.infolist()
-                total = sum(i.file_size for i in infos) or 1
+                required = sum(i.file_size for i in infos)
+                if free_space(t) < int(required * 1.15):
+                    raise RuntimeError(f"Недостаточно места на диске: нужно {int(required * 1.15) // (1 << 20)} МБ.")
+                total = required or 1
                 done = 0
                 for i in infos:
                     z.extract(i, t)
